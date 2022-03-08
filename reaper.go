@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,10 @@ const (
 
 	ReaperDefaultImage = "docker.io/testcontainers/ryuk:0.3.3"
 )
+
+type reaperContextKey string
+
+var dockerHostContextKey = reaperContextKey("docker_host")
 
 var reaper *Reaper // We would like to create reaper only once
 var mutex sync.Mutex
@@ -47,6 +53,8 @@ func NewReaper(ctx context.Context, sessionID string, provider ReaperProvider, r
 		return reaper, nil
 	}
 
+	dockerHost := extractDockerHost(ctx)
+
 	// Otherwise create a new one
 	reaper = &Reaper{
 		Provider:  provider,
@@ -58,19 +66,20 @@ func NewReaper(ctx context.Context, sessionID string, provider ReaperProvider, r
 	req := ContainerRequest{
 		Image:        reaperImage(reaperImageName),
 		ExposedPorts: []string{string(listeningPort)},
+		NetworkMode:  Bridge,
 		Labels: map[string]string{
 			TestcontainerLabel:         "true",
 			TestcontainerLabelIsReaper: "true",
 		},
 		SkipReaper: true,
-		Mounts:     Mounts(BindMount("/var/run/docker.sock", "/var/run/docker.sock")),
+		Mounts:     Mounts(BindMount(dockerHost, "/var/run/docker.sock")),
 		AutoRemove: true,
 		WaitingFor: wait.ForListeningPort(listeningPort),
 	}
 
 	// Attach reaper container to a requested network if it is specified
 	if p, ok := provider.(*DockerProvider); ok {
-		req.Networks = append(req.Networks, p.defaultNetwork)
+		req.Networks = append(req.Networks, p.DefaultNetwork)
 	}
 
 	c, err := provider.RunContainer(ctx, req)
@@ -87,12 +96,39 @@ func NewReaper(ctx context.Context, sessionID string, provider ReaperProvider, r
 	return reaper, nil
 }
 
+func extractDockerHost(ctx context.Context) (dockerHostPath string) {
+	if dockerHostPath = os.Getenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE"); dockerHostPath != "" {
+		return dockerHostPath
+	}
+
+	dockerHostPath = "/var/run/docker.sock"
+
+	var hostRawURL string
+	if h, ok := ctx.Value(dockerHostContextKey).(string); !ok || h == "" {
+		return dockerHostPath
+	} else {
+		hostRawURL = h
+	}
+	var hostURL *url.URL
+	if u, err := url.Parse(hostRawURL); err != nil {
+		return dockerHostPath
+	} else {
+		hostURL = u
+	}
+
+	switch hostURL.Scheme {
+	case "unix":
+		return hostURL.Path
+	default:
+		return dockerHostPath
+	}
+}
+
 func reaperImage(reaperImageName string) string {
 	if reaperImageName == "" {
 		return ReaperDefaultImage
-	} else {
-		return reaperImageName
 	}
+	return reaperImageName
 }
 
 // Connect runs a goroutine which can be terminated by sending true into the returned channel
