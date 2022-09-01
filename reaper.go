@@ -48,7 +48,7 @@ func NewReaper(ctx context.Context, sessionID string, provider ReaperProvider, r
 		return reaper, nil
 	}
 
-	dockerHost := extractDockerHost(ctx)
+	// dockerHost := extractDockerHost(ctx)
 
 	// Otherwise create a new one
 	reaper = &Reaper{
@@ -61,19 +61,20 @@ func NewReaper(ctx context.Context, sessionID string, provider ReaperProvider, r
 	req := ContainerRequest{
 		Image:        reaperImage(reaperImageName),
 		ExposedPorts: []string{string(listeningPort)},
-		NetworkMode:  Bridge,
+		NetworkMode:  Podman,
 		Labels: map[string]string{
 			TestcontainerLabel:         "true",
 			TestcontainerLabelIsReaper: "true",
 		},
 		SkipReaper: true,
-		Mounts:     Mounts(BindMount(dockerHost, "/var/run/docker.sock")),
+		// Mounts:     Mounts(BindMount(dockerHost, "/var/run/docker.sock")),
 		AutoRemove: true,
 		WaitingFor: wait.ForListeningPort(listeningPort),
 	}
 
 	tcConfig := provider.Config()
 	req.Privileged = tcConfig.RyukPrivileged
+
 
 	// Attach reaper container to a requested network if it is specified
 	if p, ok := provider.(*DockerProvider); ok {
